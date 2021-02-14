@@ -1,0 +1,57 @@
+---
+title: "Best Deals Hotels Vienna - Prediction & Residual Analysis"
+subtitle: "Data Analysis 3 - Assignment 3"
+author: "Cosmin Catalin Ticu"
+date: "2/14/2021"
+output:
+  html_document:
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+```{r, include=FALSE}
+#### SET UP
+
+# clear memory
+rm(list=ls())
+
+# Import libraries
+library(lspline)
+library(sandwich)
+library(modelsummary)
+library(caret)
+library(ranger)
+library(rpart)
+library(rpart.plot)
+library(tidyverse)
+library(RColorBrewer)
+library(viridis)
+library(ggthemes)
+library(pander)
+
+# source("code/gabor_textbook/da_helper_functions.R")
+
+data_in <- "data/"
+
+output <- "output(s)/"
+
+# import data -------------------------------------------------------------
+
+data <- read.csv()
+```
+
+```{r}
+data %>% 
+  ggplot(aes(x= price))+
+  geom_histogram(fill= "navyblue", col= "black", alpha = 0.5)+
+  theme_bw()+
+  scale_fill_wsj()+
+  labs(x = "Price in euro",y = "Count of Hotels", title = "Distribution of nightly price (weekday Nov. 2017)")
+```
+
+
