@@ -1,5 +1,5 @@
 ---
-title: "Best Deals Hotels Vienna - Prediction & Residual Analysis"
+title: "Best Deals Hotels Vienna - Residual Analysis"
 subtitle: "Data Analysis 3 - Assignment 3"
 author: "Cosmin Catalin Ticu"
 date: "2/14/2021"
@@ -13,6 +13,14 @@ knitr::opts_chunk$set(echo = FALSE)
 knitr::opts_chunk$set(message = FALSE)
 knitr::opts_chunk$set(warning = FALSE)
 ```
+
+# Purpose
+
+The purpose of this short case study is to identify the top 5 most undervalued hotels (best nightly price deals) in the Vienna area. The analysis undertaken by this study is similar in nature to the Hotels-Vienna case study conducted by Bekes & Kezdi in their “[Data Analysis for Business, Economics and Policy](https://gabors-data-analysis.com/)” book (follow chapter 10 for reference). Part of the aim of this report is to contrast the findings and modeling choices of Bekes & Kezdi for their Hotels Vienna dataset. As such, a similar research question to the guiding textbook arises: How can we predict the nightly price of a hotel in Vienna? Accordingly, what are the important features that go into predicting the daily price of such an accommodation? Furthermore, what are the best deals (understood here as undervalued in cost) according to our best predictive model?
+
+This case study is both a predictive modelling study as well as a residual analysis, the former stemming from the model building features and validation, while the later stems from the final analysis which aims to find the most undervalued hotels. In this case, the best deal refers to identifying the individual hotels with the lowest prediction residuals resulting from our best model. The lower the residual is (ideally spanning negative values), the larger the valuation gap between its actual price and its predicted price.
+
+The codes, data and variable explanation can all be found on this [GitHub repository](https://github.com/cosmin-ticu/da3_price-prediction).
 
 ```{r, include=FALSE}
 #### SET UP
@@ -42,8 +50,16 @@ output <- "output(s)/"
 
 # import data -------------------------------------------------------------
 
-data <- read.csv()
+data <- read.csv('https://raw.githubusercontent.com/cosmin-ticu/da3_price-prediction/main/data/hotels-vienna.csv')
 ```
+
+# Data
+
+The data used in this case study stems from Bekes & Kezdi's [data repository](https://osf.io/4e6d8/) and [case study](https://github.com/gabors-data-analysis/da_case_studies/tree/master/ch10-hotels-multiple-reg), containing a cross-sectional sample of hotels operating in Vienna. The data represents information on nightly hotel prices and hotel features gathered for a one-night weekday accommodation in November 2017. This dataset has a small number of observations, spanning less than 500 individual hotel listings in Vienna.
+
+Much in the likes of Bekes & Kezdi, the statistical goal of this study is that of a prediction analysis. We want to find the best predicted price for a hotel night's stay in Vienna according to location, ratings and hotel-centric features. On a tangible goal level, we aim to find the largest differences between actual prices and predicted prices, thus identifying best deals through residual analysis.
+
+The target variable in this case study is price, taken here in level form and measured in euros.
 
 ```{r}
 data %>% 
@@ -51,7 +67,582 @@ data %>%
   geom_histogram(fill= "navyblue", col= "black", alpha = 0.5)+
   theme_bw()+
   scale_fill_wsj()+
-  labs(x = "Price in euro",y = "Count of Hotels", title = "Distribution of nightly price (weekday Nov. 2017)")
+  labs(x = "Price in euros",y = "Count of Hotels", title = "Distribution of Vienna hotels' nightly price (weekday Nov. 2017)")
 ```
 
+As can be seen above, the distribution of prices across hotels in Vienna appears with a large right-skew. As with any financial variable, a label engineering technique needs to be applied. For the clarity of the final prediction and ease of interpretability, the price was left in level form and, instead, the extremely large values (i.e. nightly prices over 400 EUR) were removed. This not only narrows down our sample, but it reduces the skeweness significantly, thus warranting the price variable's usage in level form.
+
+More details on all of the individual variables can be found in this [explanatory Excel sheet](https://github.com/cosmin-ticu/da3_price-prediction/blob/main/data/VARIABLES.xlsx).
+
+Some redundant features as well as variables with too many missing values were removed from the list of predictors. With respective transformations, the explanatory variables were grouped into the following sets:
+
+### Base predictors
+
+* accommodation_type: This variable refers to the type of accommodation listed within the dataset. Due to the small sample of the dataset, the accommodation types with very few instances were classified into a broader "Other" category.
+
+* stars: This variable refers to the number of stars a hotel listing has. Values range from 1 to 5 in 0.5 increments.
+
+### Location variables
+
+* distance: Distance to the city center of Vienna.
+
+* distance_alter: Distance to the Donauturn of Vienna.
+
+* neighbourhood: Factorized variable for all of Vienna's neighbourhoods. Just like for the accommodation type variable, the values with too few instances were categorized into a broader "Other" category.
+
+### Rating features
+
+* rating: Represents average rating across all of the hotel's ratings. The missing values for this variable were replaced with the median and a flag was added to signify this imputation.
+
+* f_rating_count: A factorized variable which contains categories of the number of reviews a listing has. These range from "None" until "200+" ratings.
+
+### Accommodation-centric features
+
+* offer_cat: A factorized variable containing the different types of offers on a listing's price (ex. 15-50%)
+
+* scarce_room: This variable is a flag of wether a room/listing was noted as scarce.
+
+### Interactions
+
+* accommodation type by neighbourhood
+
+* accommodation type by room scarcity
+
+* accommodation type by offer category
+
+* rating by number of ratings
+
+* distance from city center by rating
+
+* distance from city center by number of stars
+
+The final sample comprises of 409 observations (individual hotel listings in Vienna) and 11 variables (10 explanatory, 1 target).
+
+```{r, include=FALSE}
+# filter out extreme values in price to bring distribution closer to normal
+data <- data %>% filter(price <= 400)
+
+# check city_actual values
+table(data$city_actual)
+
+# keep only Vienna
+data <- data %>% filter(city_actual == 'Vienna')
+
+# check distribution of neighbourhoods; looks fine --> no changes made
+table(data$neighbourhood)
+
+# check distribution of offers; 1 extreme values --> remove deal
+table(data$offer_cat)
+
+data <- data %>% filter(!offer_cat == '75%+ offer ')
+
+# check accommodation type distribution
+table(data$accommodation_type)
+
+data <- data %>% mutate(accommodation_type = trimws(accommodation_type))
+
+to_filter <- data %>% 
+  group_by(accommodation_type) %>% 
+  summarise(n = n()) %>% 
+  filter(n < 10)
+
+data <- data %>% mutate(accommodation_type = 
+                          ifelse(accommodation_type %in% to_filter$accommodation_type, 
+                                 "Other Accommodation", accommodation_type))
+
+# check neighbourhood distribution
+table(data$neighbourhood)
+
+to_filter <- data %>% 
+  group_by(neighbourhood) %>% 
+  summarise(n = n()) %>% 
+  filter(n < 10)
+
+data <- data %>% mutate(neighbourhood = ifelse(neighbourhood %in% to_filter$neighbourhood, 
+                                 "Other Neighbourhood", neighbourhood))
+
+# check for missing values
+to_filter <- sapply(data, function(x) sum(is.na(x)))
+to_filter[to_filter > 0]
+
+# handle missing values by deleting columns (+ redundant columns)
+data <- data %>% select(-c(ratingta, ratingta_count, 
+                           country, city, city_actual, center1label, center2label, offer))
+
+# handle missing values by imputation & flags
+data <- data %>% mutate(
+  flag_missing_rating = as.numeric(is.na(rating)),
+  rating = ifelse(is.na(rating), median(rating, na.rm = T), rating), # most properties start from about 4.0 rating
+  # flag_missing_rating_count = as.numeric(is.na(rating_count)), # no need for a flag as there are no other 0 values
+  rating_count = ifelse(is.na(rating_count), 0, rating_count) 
+)
+
+# right-skewed count of ratings
+ggplot(data = data, aes(x = rating_count))+
+  geom_histogram()
+
+# Pool num of reviews to 5 categories (of fairly comparable sizes)
+data <- data %>%
+  mutate(f_rating_count = cut(rating_count, c(0,1,20,70,200,max(data$rating_count)), labels=c('None','1-19','20-69','70-199','200+'), right = F))
+data %>%
+  group_by(f_rating_count) %>%
+  summarise(median_price = median(price) ,mean_price = mean(price) ,  n=n())
+# drop the extremely large value for count of ratings
+data <- data %>% filter(!is.na(f_rating_count))
+
+# dropping variables with no variation
+variances<- data %>%
+  apply(2, var, na.rm = TRUE) == 0
+
+data <- data %>%
+  select(-one_of(names(variances)[variances]))
+
+# drop unused factor levels
+data <- data %>%
+  mutate_at(vars(colnames(data)[sapply(data, is.factor)]), funs(fct_drop))
+
+# set factor variables
+data <- data %>% mutate(
+  neighbourhood = as.factor(neighbourhood),
+  offer_cat = as.factor(offer_cat),
+  f_rating_count = as.factor(f_rating_count),
+  accommodation_type = as.factor(accommodation_type)
+)
+
+# variable sets for model selection
+basic_vars <- c('accommodation_type', 'stars')
+location_vars <- c('distance' ,'distance_alter', 'neighbourhood')
+rating_features <- c('rating', 'flag_missing_rating', 'f_rating_count')
+accommodation_features <- c('scarce_room','offer_cat')
+
+# interactions
+interact <- c("accommodation_type*neighbourhood", "accommodation_type*scarce_room", "accommodation_type*offer_cat", "rating*f_rating_count", "distance*rating", "distance*stars")
+
+# Predictor sets for linear regression
+X1 <- basic_vars
+X2 <- c(basic_vars, location_vars)
+X3 <- c(basic_vars, location_vars, rating_features)
+X4 <- c(basic_vars, location_vars, rating_features, accommodation_features)
+# last model is created to check overfitting results
+X5 <- c(basic_vars, location_vars, rating_features, accommodation_features, interact)
+
+# create model formulae
+modellev1 <- paste0(" ~ ",paste(X1, collapse = " + "))
+modellev2 <- paste0(" ~ ",paste(X2, collapse = " + "))
+modellev3 <- paste0(" ~ ",paste(X3, collapse = " + "))
+modellev4 <- paste0(" ~ ",paste(X4, collapse = " + "))
+modellev5 <- paste0(" ~ ",paste(X5, collapse = " + "))
+```
+
+# Modelling Choices
+
+The predictive models of choice for this case study are OLS regression, CART (decision tree) and Random Forest. The OLS regression is run according to 5 models of orderly increasing complexity, spanning only the base predictors all the way until a complete prediction with almost 200 predictors (location, hotel-centric, ratings & interactions). The last model was created in order to see just how strong the overfitting effects are.
+
+To run the OLS, a 3-fold cross-validation approach was chosen seeing as the dataset was too small to separate between a holdout set and a working set. By employing cross-validation, we are able to minimize the negative effects of the small sample while still retaining validation measures for choice of best performing model (i.e. test RMSE can be compared, unlike falsely comparing training RMSE values which do not uncover potential overfitting).
+
+```{r, include=FALSE}
+#################################
+# Separate hold-out set #
+#################################
+
+# cannot separate hold-out set due to extremely small sample size
+
+
+# cross validation OLS ----------------------------------------------------
+
+# function to compute MSE
+mse_lev <- function(pred, y) {
+  # Mean Squared Error for log models
+  (mean((pred - y)^2, na.rm=T))
+}
+
+n_folds=3
+# Create the folds
+set.seed(20210214)
+
+folds_i <- sample(rep(1:n_folds, length.out = nrow(data) ))
+# Create results
+model_results_cv <- list()
+
+for (i in (1:5)){
+  model_name <-  paste0("modellev",i)
+  model_pretty_name <- paste0("(",i,")")
+  
+  yvar <- "price"
+  xvars <- eval(parse(text = model_name))
+  formula <- formula(paste0(yvar,xvars))
+  
+  # Initialize values
+  rmse_train <- c()
+  rmse_test <- c()
+  
+  model_work_data <- lm(formula,data = data)
+  BIC <- BIC(model_work_data)
+  nvars <- model_work_data$rank -1
+  r2 <- summary(model_work_data)$r.squared
+  
+  # Do the k-fold estimation
+  for (k in 1:n_folds) {
+    test_i <- which(folds_i == k)
+    # Train sample: all except test_i
+    data_train <- data[-test_i, ]
+    # Test sample
+    data_test <- data[test_i, ]
+    # Estimation and prediction
+    model <- lm(formula,data = data_train)
+    prediction_train <- predict(model, newdata = data_train)
+    prediction_test <- predict(model, newdata = data_test)
+
+    # Criteria evaluation
+    rmse_train[k] <- mse_lev(prediction_train, data_train$price)**(1/2)
+    rmse_test[k] <- mse_lev(prediction_test, data_test$price)**(1/2)
+    
+  }
+  
+  model_results_cv[[model_name]] <- list(yvar=yvar,xvars=xvars,formula=formula,model_work_data=model_work_data,
+                                         rmse_train = rmse_train,rmse_test = rmse_test,BIC = BIC,
+                                         model_name = model_pretty_name, nvars = nvars, r2 = r2)
+}
+
+t1 <- imap(model_results_cv,  ~{
+  as.data.frame(.x[c("rmse_test", "rmse_train")]) %>%
+    dplyr::summarise_all(.funs = mean) %>%
+    mutate("model_name" = .y , "model_pretty_name" = .x[["model_name"]] ,
+           "nvars" = .x[["nvars"]], "r2" = .x[["r2"]], "BIC" = .x[["BIC"]])
+}) %>%
+  bind_rows()
+```
+
+```{r}
+knitr::kable(t1, caption = "Predictive OLS Comparison")
+```
+
+The table above provides a comparison between all of the OLS models. We can clearly see the overfitting effects of the 5th model with almost 200 predictors. Out of all the models, the closest gap between train and test RMSE as well as strong BIC and model complexity is held by model 3. This model contains the base predictor variables, the location features and the rating features. Accordingly, this model is taken further to be compared between CART and Random Forest to find the best predicting model.
+
+```{r, include=FALSE}
+# Model 3 best in terms of test RMSE and provides a good BIC.
+# Model of choice is model 3 - good trade-off between number of variables and performance --> Occam's Razor!
+
+
+# CART --------------------------------------------------------------------
+
+# set parameters
+train_control <- trainControl(method = "cv", number = n_folds)
+model_cart <- formula(paste0(yvar,modellev3))
+
+
+# CART with rpart & using cross-validation
+set.seed(20210214)
+system.time({
+  cart1 <- train(model_cart,
+                      data = data,
+                      method = "rpart",
+                      tuneLength = 10,
+                      trControl = train_control
+  )
+})
+
+cart1
+summary(cart1)
+pred_cart1 <- predict(cart1, data)
+rmse_cart1 <- sqrt(mean((pred_cart1 - data$price)^2))
+
+# Tree graph
+rpart.plot(cart1$finalModel, tweak=1.2, digits=-1, extra=1)
+
+
+
+# CART with rpart2
+# setting the total number of splits
+set.seed(20210214)
+cart2 <- train(
+  model_cart, data = data, method = "rpart2",
+  trControl = train_control,
+  tuneGrid= data.frame(maxdepth=10))
+
+summary(cart2)
+pred_cart2 <- predict(cart2, data)
+rmse_cart2 <- sqrt(mean((pred_cart2 - data$price)^2))
+
+# CART with rpart & using cross-validation
+# setting the minimum number of observations in a node be equal to at least 10
+# a split must decrease the overall lack of fit by a factor of 0.01
+set.seed(20210214)
+system.time({
+  cart3 <- train(model_cart,
+                 data = data,
+                 method = "rpart",
+                 tuneGrid= expand.grid(cp = 0.01),
+                 control = rpart.control(minsplit = 10),
+                 na.action = na.pass,
+                 trControl = train_control
+  )
+})
+
+cart3
+summary(cart3)
+pred_cart3 <- predict(cart3, data)
+rmse_cart3 <- sqrt(mean((pred_cart3 - data$price)^2))
+
+# Compare the three models
+
+cart_compare <- data.frame(
+  "Model" = c("CART Model 1", "CART Model 2", "CART Model 3"),
+  "RMSE" = c(rmse_cart1, rmse_cart2, rmse_cart3)
+)
+```
+
+```{r}
+knitr::kable(cart_compare, caption = "Average RMSE of CART Models on Test Folds")
+```
+
+The table above shows a great increase in performance (test RMSE) for the CART models as opposed to the original OLS model (modellev3). We can see that CART model 3 outperforms the other 2 models. This model is the most fine-tuned CART, containing the a 0.01 cost complexity factor (i.e. decreasing the overall lack of fit by a factor of 0.01) and a minimum split value of 10 (i.e. a minimum of 10 observations in a node before attempting each split). With a test RMSE of 39.9 as opposed to model 3's performance of 48.8 we can proceed with this model as our predictive choice.
+
+```{r}
+# Tree graph
+rpart.plot(cart3$finalModel, tweak=1.2, digits=-1, extra=1)
+```
+
+The plot above represents the decision tree created by the chosen CART model. As can be seen, almost all of the original predictor variables were used, apart from accommodation type, which is a peculiar finding in it of its own. Accordingly, we can proceed with creating a Random Forest model to see if we can increase the performance.
+
+```{r, include=FALSE}
+# Random Forest -----------------------------------------------------------
+
+
+## Random forest
+# do 3-fold CV
+train_control <- trainControl(method = "cv",
+                              number = 3,
+                              verboseIter = T)
+# set tuning
+tune_grid <- expand.grid(
+  .mtry = c(3, 5, 7),
+  .splitrule = "variance",
+  .min.node.size = c(5, 10)
+)
+
+# Model RF with pre-set tuning parameters
+set.seed(20210214)
+system.time({
+  rf_model1 <- train(model_cart,
+                    data = data,
+                    method = "ranger",
+                    trControl = train_control,
+                    tuneGrid = tune_grid,
+                    importance = "impurity"
+  )
+})
+rf_model1
+rmse_rf1 <- mean(rf_model1$resample$RMSE)
+
+# Model RF with auto-tuning function
+set.seed(1234)
+system.time({
+  rf_model2 <- train(
+    model_cart,
+    data = data,
+    method = "ranger",
+    trControl = train_control,
+    importance = "impurity"
+  )
+})
+rf_model2
+rmse_rf2 <- mean(rf_model2$resample$RMSE)
+
+results <- resamples(
+  list(
+    model_1  = rf_model1,
+    model_2  = rf_model2
+  )
+) 
+```
+
+```{r}
+# Compare the models
+
+CARTandRF_compare <- data.frame(
+  "Model" = c("CART Model 3", "RF Model 1", "RF Model 2"),
+  "RMSE" = c(rmse_cart3, rmse_rf1, rmse_rf2)
+)
+knitr::kable(CARTandRF_compare, caption = "CART v RF Average RMSE on Test Folds")
+```
+
+According to the table above, the Random Forest models, being more computationally expensive and being black box predictors, have performed with larger RMSE values than the chosen CART model. Even the second random forest, which was created with auto-tuning parameters, has performed more poorly than the most advanced CART.
+
+With this finding in mind, we can proceed with fitting the final model on the full dataset (without cross-validation) and perform the residual analysis.
+
+# Residual Analysis - CART
+
+```{r, include=FALSE}
+# Residual Analysis -------------------------------------------------------
+
+## So the model with the best RMSE is the advanced CART (3rd)
+
+set.seed(20210214)
+system.time({
+  final_CART <- train(model_cart,
+                 data = data,
+                 method = "rpart",
+                 tuneGrid= expand.grid(cp = 0.01),
+                 control = rpart.control(minsplit = 10),
+                 na.action = na.pass,
+                 trControl = trainControl(method = "none")
+  )
+})
+
+final_CART
+
+data$CART_predicted_price <- predict(final_CART, newdata = data, type = "raw")
+
+
+# Calculate residuals
+
+data$CART_prediction_res <- data$price - data$CART_predicted_price
+
+data %>% select(price, CART_prediction_res, CART_predicted_price)
+
+# List of 5 best deals
+bestdeals <- data %>%
+  select(hotel_id, price, CART_prediction_res, distance, stars, rating) %>%
+  arrange(CART_prediction_res) %>%
+  .[1:5,] %>%
+  as.data.frame() 
+
+rownames(bestdeals) <- NULL
+```
+
+While running a cross-validated model on its original dataset and not on its holdout set decrease the external validity of this model, the purpose of this case is not to build the most robust price predicting model. This is also accentuated by the choice of a CART model for prediction, which uses binary splits to more-so classify predicted prices in categories of prices rather than provide individual values. For identifying the best deals, referring to a residual analysis, this modeling choice of running the final predictive outcome on the full (training) dataset is a viable option.
+
+The following table showcases the top 5 price deals identified by the predictive CART model.
+
+```{r}
+pander(bestdeals)
+```
+
+As can be clear from a first glance at this table, the residual values are extremely large, sometimes spanning the entire original price. Nonetheless, the size itself of the residual is not used for any predictive purpose. As such, due to the binary splitting nature of the CART models, we cannot use these findings to say, for example, that hotel 22022 is a good deal because it is actually 115 euros cheaper than its predicted price. Rather, we can see that the hotels with these extremely low residuals are also very close to the city center, have a good number of stars and hold 4 or higher ratings.
+
+It is worthwhile to inspect the residual values of the 5 original hotels identified by Bekes & Kezdi in their parent case study.
+
+```{r, include=FALSE}
+# designate the best deals in the data as well
+data$bestdeals <- ifelse(data$CART_prediction_res %in% tail(sort(data$CART_prediction_res, decreasing=TRUE),5),TRUE,FALSE)
+
+original_hotels <- data[data$hotel_id %in% c(21912, 21975, 22080, 22184, 22344),]
+best_original_deals <- original_hotels  %>%
+  select(hotel_id, price, CART_prediction_res, distance, stars, rating) %>%
+  .[1:5,] %>%
+  as.data.frame() 
+
+rownames(best_original_deals) <- NULL
+```
+
+```{r}
+pander(best_original_deals)
+```
+
+The table above finds that the hotels designated by Bekes & Kezdi are also good deals, having an actual price much lower than predicted price. This reinforces the strength of this model, namely that it is able to find the good deals, exhibiting external validity with other models (like Bekes & Kezdi's multiple regression logarithmic price prediction).
+
+Lastly, it is worthwhile to visualize the 5 best deals identified by this model in a scatterplot of predicted versus actual values (or a y-yhat plot).
+
+```{r}
+# y - yhat graph
+y_yhat_hotels <- ggplot(data = data, aes(y=price, x=CART_predicted_price)) +
+  geom_point(aes(color=bestdeals,shape=bestdeals), size = 1.5, fill='blue', alpha = 0.8, show.legend=F, na.rm = TRUE) +
+  geom_segment(aes(x = 0, y = 0, xend = 400, yend = 400), size=0.5, color='red', linetype=2) +
+  coord_cartesian(xlim = c(0, 400), ylim = c(0, 400)) +
+  scale_x_continuous(expand = c(0.01,0.01),limits=c(0, 400), breaks=seq(0, 400, by=50)) +
+  scale_y_continuous(expand = c(0.01,0.01),limits=c(0, 400), breaks=seq(0, 400, by=50)) +
+  labs(y = "Price (EURO)", x = "Predicted price  (EURO)")+
+  theme_bw()+
+  scale_fill_wsj()
+y_yhat_hotels
+```
+
+As we can see from the plot above, the hotels identified with the best deals stand out from the graph, especially the ones in the bottom-right quadrant of the graph.
+
+We can also proceed with inspecting the residuals of the best OLS modela and the best Random Forest model. It is worthwhile to see whether the prediction residuals are smaller than the binary-splitting CART model's outputs.
+
+## OLS Residual Analysis
+
+```{r, include=FALSE}
+# Residual Analysis OLS -------------------------------------------------------
+final_OLS <- lm(paste0('price',modellev3), data = data)
+
+data$OLS_predicted_price <- predict(final_OLS, data)
+
+# Calculate residuals
+
+data$OLS_prediction_res <- data$price - data$OLS_predicted_price
+
+data %>% select(price, OLS_prediction_res, OLS_predicted_price)
+
+# List of 5 best deals
+bestdeals_OLS <- data %>%
+  select(hotel_id, price, OLS_prediction_res, distance, stars, rating) %>%
+  arrange(OLS_prediction_res) %>%
+  .[1:5,] %>%
+  as.data.frame() 
+
+rownames(bestdeals_OLS) <- NULL
+```
+
+```{r}
+pander(bestdeals_OLS)
+```
+
+The table above shows extremely large residuals for the OLS model. None of the OLS best deals according to residuals match the original ones found by Bekes & Kezdi in their original case study. Perhaps one of the reasons for this finding is that the sample employed in this study is of all starred hotels, rather than just 3-4 star hotels.
+
+## Random Forest Residual Analysis
+
+```{r, include=FALSE}
+# Residual Analysis RF -------------------------------------------------------
+train_control <- trainControl(method = "none",
+                              verboseIter = F)
+
+tune_grid <- expand.grid(
+  .mtry = c(10),
+  .splitrule = "variance",
+  .min.node.size = c(5)
+)
+
+set.seed(20210214)
+system.time({
+  final_RF <- train(model_cart,
+                     data = data,
+                     method = "ranger",
+                     trControl = train_control,
+                     tuneGrid = tune_grid,
+                     importance = "impurity"
+  )
+})
+
+data$RF_predicted_price <- predict(final_RF, data)
+
+# Calculate residuals
+
+data$RF_prediction_res <- data$price - data$RF_predicted_price
+
+data %>% select(price, RF_prediction_res, RF_predicted_price)
+
+# List of 5 best deals
+bestdeals_RF <- data %>%
+  select(hotel_id, price, RF_prediction_res, distance, stars, rating) %>%
+  arrange(RF_prediction_res) %>%
+  .[1:5,] %>%
+  as.data.frame() 
+
+rownames(bestdeals_RF) <- NULL
+```
+
+```{r}
+pander(bestdeals_RF)
+```
+
+The final table of prices ordered by prediction residuals is for the Random Forest model. Here we can see much smaller residual values, thus denoting that RF tends to perform better than OLS with non-linear patterns in the data (especially when price is skewed to the right) and tends to approximate more accurately than CART as it actually predicts continuous values for price rather than categories. Nonetheless, its black box nature means that RF is not a suitable choice for analysts looking to find significant features or clear-cut coefficients.
+
+Just like with OLS and CART, none of the top 5 hotels for best deals match the ones in the Bekes & Kezdi study, thus raising awareness of the importance of parameter tuning, feature selection, functional forms and even feature engineering.
+
+# Summary
+
+In short, this case study has found that even when using a binary splitting predictive model such as CART, when the parameters are fine-tuned, the resulting model can help identify overvalued and overvalued instances just as well or even better than a seemingly linear model or a black-box model (exhibiting a higher test RMSE). While a CART has the advantage of not needing to find linear patterns, something which helps it outperform OLS, it also possesses the advantage of being an open-box predictive model, thus allowing for more interpreability and ease of understanding as opposed to Random Forest. In fact, by doing binary splits for predicted prices into categories rather than individual continuous values, the undervaluation and overvaluation factor is accentuated. This has become apparent when inspecting the top 5 best deals for hotels in Vienna (for a weekday stay in November 2017).
 

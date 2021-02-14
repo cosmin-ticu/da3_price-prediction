@@ -364,7 +364,7 @@ CARTandRF_compare <- data.frame(
 )
 CARTandRF_compare
 
-# Residual Analysis -------------------------------------------------------
+# Residual Analysis CART -------------------------------------------------------
 
 ## So the model with the best RMSE is the advanced CART (3rd)
 
@@ -428,3 +428,64 @@ y_yhat_hotels <- ggplot(data = data, aes(y=price, x=CART_predicted_price)) +
   scale_fill_wsj()
 y_yhat_hotels
 
+# Residual Analysis OLS -------------------------------------------------------
+final_OLS <- lm(paste0('price',modellev3), data = data)
+
+data$OLS_predicted_price <- predict(final_OLS, data)
+
+# Calculate residuals
+
+data$OLS_prediction_res <- data$price - data$OLS_predicted_price
+
+data %>% select(price, OLS_prediction_res, OLS_predicted_price)
+
+# List of 5 best deals
+bestdeals_OLS <- data %>%
+  select(hotel_id, price, OLS_prediction_res, distance, stars, rating) %>%
+  arrange(OLS_prediction_res) %>%
+  .[1:5,] %>%
+  as.data.frame() 
+
+rownames(bestdeals_OLS) <- NULL
+
+pander(bestdeals_OLS)
+
+# Residual Analysis RF -------------------------------------------------------
+train_control <- trainControl(method = "none",
+                              verboseIter = F)
+
+tune_grid <- expand.grid(
+  .mtry = c(10),
+  .splitrule = "variance",
+  .min.node.size = c(5)
+)
+
+set.seed(20210214)
+system.time({
+  final_RF <- train(model_cart,
+                     data = data,
+                     method = "ranger",
+                     trControl = train_control,
+                     tuneGrid = tune_grid,
+                     importance = "impurity"
+  )
+})
+
+data$RF_predicted_price <- predict(final_RF, data)
+
+# Calculate residuals
+
+data$RF_prediction_res <- data$price - data$RF_predicted_price
+
+data %>% select(price, RF_prediction_res, RF_predicted_price)
+
+# List of 5 best deals
+bestdeals_RF <- data %>%
+  select(hotel_id, price, RF_prediction_res, distance, stars, rating) %>%
+  arrange(RF_prediction_res) %>%
+  .[1:5,] %>%
+  as.data.frame() 
+
+rownames(bestdeals_RF) <- NULL
+
+pander(bestdeals_RF)
